@@ -143,8 +143,11 @@ viewTargetAlignment <- function(m, miRNA, seqs=NULL, flagBulgeMatches=FALSE,
     # re-scan to get additional data
     maxBulgeSize <- max(p3.params$maxMirLoop, p3.params$maxTargetLoop)
     internStart <- max(1L,start(m)-(nchar(miRNA)+maxBulgeSize-8L))
-    seq2 <- subseq(DNAStringSet(seqs[as.character(seqnames(m))]),
-                   internStart, end(m)+2L)
+    seq2 <- 
+      ifelse((end(m)+2L) <= width(DNAStringSet(seqs[as.character(seqnames(m))])),
+             subseq(DNAStringSet(seqs[as.character(seqnames(m))]),internStart, end(m)+2L), 
+             subseq(DNAStringSet(seqs[as.character(seqnames(m))]),internStart, 
+                    width(DNAStringSet(seqs[as.character(seqnames(m))]))))
     tx_start <- start(m)
     m <- findSeedMatches(seq2, mod, keepMatchSeq=TRUE, p3.extra=TRUE,
                          p3.params=p3.params,

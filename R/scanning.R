@@ -25,6 +25,7 @@
 #' @param p3.extra Logical; whether to keep extra information about 3'
 #' alignment. Disable (default) this when running large scans, otherwise you
 #' might hit your system's memory limits.
+#' @param moreTDMD switching from lenient or stringent TDMD detection rules
 #' @param p3.params Named list of parameters for 3' alignment with slots
 #' `maxMirLoop` (integer, default = 7), `maxTargetLoop` (integer, default = 9),
 #' `maxLoopDiff` (integer, default = 4), `mismatch`
@@ -70,8 +71,9 @@
 findSeedMatches <- function( seqs, seeds, shadow=0L, onlyCanonical=FALSE,
                              maxLogKd=c(-1,-1.5), keepMatchSeq=FALSE,
                              minDist=7L, p3.extra=FALSE,
+                             moreTDMD=FALSE,
                              p3.params=list(maxMirLoop=7L, maxTargetLoop=9L,
-                                            maxLoopDiff=4L, mismatch=TRUE,
+                                            maxLoopDiff=7L, mismatch=TRUE,
                                             GUwob=TRUE),
                              agg.params=.defaultAggParams(),
                              ret=c("GRanges","data.frame","aggregated"),
@@ -144,7 +146,7 @@ findSeedMatches <- function( seqs, seeds, shadow=0L, onlyCanonical=FALSE,
     m <- .find1SeedMatches(seqs, seeds, keepMatchSeq=keepMatchSeq,
                            minDist=minDist, maxLogKd=maxLogKd,
                            onlyCanonical=onlyCanonical, p3.extra=p3.extra,
-                           p3.params=p3.params, offset=offset,
+                           moreTDMD=moreTDMD, p3.params=p3.params, offset=offset,
                            verbose=verbose, ret=ret)
     if(length(m)==0) return(m)
     if(ret=="aggregated"){
@@ -190,7 +192,7 @@ findSeedMatches <- function( seqs, seeds, shadow=0L, onlyCanonical=FALSE,
                                keepMatchSeq=keepMatchSeq, minDist=minDist,
                                maxLogKd=maxLogKd, p3.extra=p3.extra,
                                onlyCanonical=onlyCanonical, p3.params=p3.params,
-                               ret=ret, offset=offset, verbose=verbose)
+                               moreTDMD=moreTDMD, ret=ret, offset=offset, verbose=verbose)
         if(ret=="aggregated"){
           if(verbose) message("Aggregating...")
           if(length(m)==0) return(data.frame())
@@ -262,7 +264,7 @@ findSeedMatches <- function( seqs, seeds, shadow=0L, onlyCanonical=FALSE,
 # scan for a single seed
 .find1SeedMatches <- function(seqs, seed, keepMatchSeq=FALSE, maxLogKd=-1,
                               minDist=1L, onlyCanonical=FALSE, p3.extra=FALSE,
-                              p3.params=list(), offset=0L,
+                              moreTDMD=FALSE, p3.params=list(), offset=0L,
                               ret=c("GRanges","data.frame","aggregated"),
                               verbose=FALSE){
   ret <- match.arg(ret)
@@ -288,7 +290,7 @@ findSeedMatches <- function( seqs, seeds, shadow=0L, onlyCanonical=FALSE,
         warning("The `seed` given seems to be neither a miRNA target seed nor",
                 "a mature miRNA sequence! Scanning for ", seed)
     }
-    pat <- substr(seed,2,7)
+    pat <- substr(seed,2,6)
     if(!onlyCanonical)
       pat <- paste0(pat,"|",substr(seed,2,3),"G",substr(seed,4,7))
     pos <- gregexpr(paste0("(?=.",pat,".)"), seqs, perl=TRUE)
@@ -362,7 +364,8 @@ findSeedMatches <- function( seqs, seeds, shadow=0L, onlyCanonical=FALSE,
                           maxMirLoop=p3.params$maxMirLoop,
                           maxLoopDiff=p3.params$maxLoopDiff,
                           maxTargetLoop=p3.params$maxTargetLoop,
-                          TGsub = p3.params$GUwob)
+                          TGsub = p3.params$GUwob,
+                          moreTDMD = moreTDMD)
     if(p3.extra){
       mcols(m) <- cbind(mcols(m), p3)
       if(keepMatchSeq){
@@ -458,6 +461,7 @@ findSeedMatches <- function( seqs, seeds, shadow=0L, onlyCanonical=FALSE,
 #' @param maxMirLoop Maximum miRNA loop size
 #' @param maxTargetLoop Maximum target loop size
 #' @param maxLoopDiff Maximum size difference between miRNA and target loops
+#' @param moreTDMD switching from lenient or stringent TDMD detection rules
 #'
 #' @return A data.frame with one row for each element of `seqs`, indicating the
 #' size of the miRNA bulge, the size of the target mRNA bulge, the number of
@@ -470,7 +474,7 @@ findSeedMatches <- function( seqs, seeds, shadow=0L, onlyCanonical=FALSE,
 #' get3pAlignment(seqs="NNAGTGTGCCATNN", mirseq="TGGAGTGTGACAATGGTGTTTG")
 get3pAlignment <- function(seqs, mirseq, mir3p.start=9L, allow.mismatch=TRUE,
                            maxMirLoop=7L, maxTargetLoop=9L, maxLoopDiff=4L,
-                           TGsub=TRUE, siteType=NULL){
+                           TGsub=TRUE, siteType=NULL, moreTDMD = FALSE){
   if(!is.null(siteType)) stopifnot(length(seqs)==length(siteType))
   mir.3p <- as.character(DNAString(substr(x=mirseq,
                                           start=mir3p.start,
@@ -486,14 +490,13 @@ get3pAlignment <- function(seqs, mirseq, mir3p.start=9L, allow.mismatch=TRUE,
   df$p3.mismatch <- nchar(mir.3p)-width(pattern(al))-df$p3.mir.bulge
   df$p3.score <- as.integer(score(al))
   diff <- abs(df$p3.mir.bulge-df$p3.target.bulge)
-  df$p3.score <- ifelse(diff > 2L, df$p3.score - (diff - 2L), df$p3.score)
   df[which(df$p3.mir.bulge>maxMirLoop | df$p3.target.bulge>maxTargetLoop |
              diff>maxLoopDiff),
      c("p3.mir.bulge","p3.target.bulge","p3.score")] <- 0L
   if(!is.integer(df$p3.score)) df$p3.score <- as.integer(round(df$p3.score))
   if(!is.null(siteType)){
     df$type <- siteType
-    df$note <- .TDMD(df, mirseq, acceptWobble=TGsub)
+    df$note <- .TDMD(df, mirseq, acceptWobble=TGsub, moreTDMD=moreTDMD)
     n_9_11 <- substr(as.character(mirseq),9,11)
     if(length(w <- which(df$note %in% c("Slicing","Slicing?")))>0 &&
        sum(w2 <- !grepl(paste0("^",n_9_11), as.character(seqs)[w]))>0){
@@ -505,20 +508,29 @@ get3pAlignment <- function(seqs, mirseq, mir3p.start=9L, allow.mismatch=TRUE,
   df
 }
 
-.TDMD <- function(m, mirseq, acceptWobble=TRUE){
+.TDMD <- function(m, mirseq, acceptWobble=TRUE, moreTDMD=FALSE){
   tt <- c("8mer","7mer-m8","7mer-a1","g-bulged 8mer")
   if(acceptWobble) tt <- c(tt, "wobbled 8mer","wobbled 7mer")
+  if(moreTDMD) tt <- c(tt, '6mer', '6mer-m8')
   is78 <- which(m$type %in% tt)
   m2 <- m[is78,]
   isWobble <- m2$type %in% c("wobbled 8mer","wobbled 7mer")
   isBulged <- m2$type=="g-bulged 8mer"
+  if(moreTDMD) isBulged <- m2$type %in% c("g-bulged 8mer", "g-bulged 7mer")
   m2$TDMD <- rep(1L,nrow(m2))
   absbulgediff <- abs(m2$p3.mir.bulge-m2$p3.target.bulge)
-  w <- which(m2$p3.mismatch<=1L & m2$p3.mir.bulge<=7L & !isBulged & !isWobble &
-             m2$p3.mir.bulge > 1L & absbulgediff <= 4L & m2$p3.score >= 6L)
+  if(!moreTDMD){
+    w <- which(m2$p3.mismatch<=1L & m2$p3.mir.bulge<=7L & !isBulged & 
+                 !isWobble & m2$p3.mir.bulge > 1L & absbulgediff <= 4L & 
+                 m2$p3.score >= 6L)
+  } else{
+    w <- which(m2$p3.mismatch<=6L & m2$p3.mir.bulge<=7L & !isBulged &
+                 !isWobble & m2$p3.mir.bulge >= 0L & absbulgediff <= 7L & 
+                 m2$p3.score >= 6L)
+  }
   if(length(w)>0) m2$TDMD[w] <- 2L
-  w <- which( m2$type != "7mer-a1"  &
-              m2$p3.score >= 7L & m2$p3.mir.bulge == 0L & absbulgediff == 0L )
+  w <- which( m2$type != "7mer-a1"  & m2$type != "6mer" & m2$type != "6mer-m8" &
+                m2$p3.score >= 7L & m2$p3.mir.bulge == 0L & absbulgediff == 0L )
   if(length(w)>0) m2$TDMD[w] <- 3L
   m2$not.bound <- nchar(mirseq) - 8L - m2$p3.score
   w <- which(m2$TDMD == 3L & m2$p3.mismatch <= 1L & m2$not.bound <= 1L &
